@@ -21,6 +21,38 @@ class ActionResult(BaseModel):
     entry: dict[str, Any] | None = None
 
 
+class StageTrace(BaseModel):
+    """采样四环节中单个环节的输入输出轨迹。"""
+
+    stage: int
+    stage_name: str
+    action: str
+    input: Any
+    output: Any
+
+
+class SamplingRunResult(BaseModel):
+    """一次采样执行结果：成功带样本表，失败带卡点环节与截至当前的轨迹。"""
+
+    ok: bool
+    message: str
+    stage: int | None = None
+    stage_name: str | None = None
+    配置编号: str | None = None
+    output_table: str | None = None
+    row_count: int | None = None
+    rows: list[dict[str, Any]] | None = None
+    trace: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class OutputTableResult(BaseModel):
+    """采样输出表：采样环节④与数据准备流水线共用同一张表。"""
+
+    ok: bool
+    message: str
+    table: dict[str, Any] | None = None
+
+
 class EntryPayload(BaseModel):
     """登记或修改一条业务记录时提交的字段集合。"""
 

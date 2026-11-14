@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas import ActionResult, EntryPayload, PageResult
+from app.schemas import ActionResult, EntryPayload, OutputTableResult, PageResult
 from app.services.etl import EtlService
 
 router = APIRouter(prefix="/api/etl", tags=["数据准备流水线"])
@@ -56,6 +56,15 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
+
+
+@router.get("/inputs/{table_name}", response_model=OutputTableResult)
+def read_sampling_output(table_name: str) -> OutputTableResult:
+    """数据准备流水线读取采样环节④写出的同一张样本输出表。"""
+    table, message = service.read_sampling_output(table_name)
+    if table is None:
+        return OutputTableResult(ok=False, message=message, table=None)
+    return OutputTableResult(ok=True, message="ok", table=table)
 
 
 @router.get("/export")

@@ -1,11 +1,11 @@
-"""数据采样管理接口：维护采样配置，覆盖启用采样、暂停采样、关闭采样等动作。"""
+"""数据采样管理接口：维护采样配置，并提供四环节采样执行与输出表读取。"""
 from __future__ import annotations
 
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas import ActionResult, EntryPayload, PageResult
+from app.schemas import ActionResult, EntryPayload, OutputTableResult, PageResult, SamplingRunResult
 from app.services.sample import SampleService
 
 router = APIRouter(prefix="/api/sample", tags=["数据采样管理"])
@@ -28,6 +28,39 @@ def list_entries(
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
     items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+# 静态路径必须排在 /{entry_id} 之前，否则 outputs 会被当成 entry_id 匹配。
+@router.get("/outputs", response_model=dict)
+def list_output_tables() -> dict[str, Any]:
+    """列出采样环节④已写出的全部样本输出表。"""
+    return {"items": service.list_output_tables()}
+
+
+@router.get("/outputs/{table_name}", response_model=OutputTableResult)
+def get_output_table(table_name: str) -> OutputTableResult:
+    """按表名读取样本输出表；数据准备流水线也读这张表。"""
+    table = service.get_output_table(table_name)
+    if table is None:
+        return OutputTableResult(ok=False, message=f"采样输出表「{table_name}」尚未生成", table=None)
+    return OutputTableResult(ok=True, message="ok", table=table)
+
+
+@router.post("/{entry_id}/run", response_model=SamplingRunResult)
+def run_sampling(entry_id: int) -> SamplingRunResult:
+    """执行一次采样：①配置读取 → ②随机种子选择 → ③分层字段拆分 → ④结果写入。
+
+    同配置重复执行结果逐行相同；缺字段时停在对应环节并返回环节轨迹。
+    """
+    result = service.execute_sampling(entry_id)
+    return SamplingRunResult(**result)
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出数据采样管理清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "sample", "total": total, "items": items}
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -56,10 +89,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出数据采样管理清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "sample", "total": total, "items": items}

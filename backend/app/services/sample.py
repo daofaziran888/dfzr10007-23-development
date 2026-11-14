@@ -1,8 +1,9 @@
-"""数据采样管理业务规则：状态流转、字段校验与筛选口径都收在这里。"""
+"""数据采样管理业务规则：状态流转、字段校验，以及四环节采样执行的装配。"""
 from __future__ import annotations
 
 from typing import Any
 
+from app.sampling import SamplingStageError, run_pipeline
 from app.store import store
 
 MODULE = "sample"
@@ -59,3 +60,66 @@ class SampleService:
         entry["pending"] = target != STATUS_ORDER[-1]
         entry["abnormal"] = action in NEGATIVE_ACTIONS
         return entry, f"采样配置已{action}"
+
+    # ------------------------------------------------------------------ #
+    # 四环节采样执行：①配置读取 → ②随机种子选择 → ③分层字段拆分 → ④结果写入
+    # ------------------------------------------------------------------ #
+    def execute_sampling(self, entry_id: int) -> dict[str, Any]:
+        entry = self.get_entry(entry_id)
+        if entry is None:
+            return {
+                "ok": False,
+                "stage": 0,
+                "stage_name": "配置读取",
+                "message": f"采样配置 {entry_id} 不存在或已归档，环节①配置读取无法开始",
+                "trace": [],
+            }
+
+        # 写入前的归属校验：输出表名一旦被其他配置占用，就停在环节④之前，不覆盖别人的表。
+        output_table = str(entry.get("输出表名") or "").strip()
+        owner = self._find_output_table_owner(output_table, exclude_id=entry_id)
+        if output_table and owner is not None:
+            return {
+                "ok": False,
+                "stage": 4,
+                "stage_name": "结果写入",
+                "message": (
+                    f"环节④结果写入失败：输出表「{output_table}」已被采样配置「{owner}」占用，"
+                    "拒绝覆盖"
+                ),
+                "trace": [],
+            }
+
+        def writer(table_name: str, rows: list[dict[str, Any]], meta: dict[str, Any]) -> None:
+            store.save_output_table(table_name, rows, meta)
+
+        try:
+            result = run_pipeline(dict(entry), writer)
+        except SamplingStageError as exc:
+            return {
+                "ok": False,
+                "stage": exc.stage,
+                "stage_name": exc.stage_name,
+                "message": str(exc),
+                "trace": exc.trace,
+            }
+        result["message"] = (
+            f"采样完成：{result['row_count']} 行已写入输出表「{result['output_table']}」"
+        )
+        return result
+
+    def list_output_tables(self) -> list[dict[str, Any]]:
+        return store.list_output_tables()
+
+    def get_output_table(self, table_name: str) -> dict[str, Any] | None:
+        return store.get_output_table(table_name)
+
+    def _find_output_table_owner(self, output_table: str, *, exclude_id: int) -> str | None:
+        if not output_table:
+            return None
+        for row in store.rows(MODULE):
+            if int(row.get("id", 0)) == exclude_id:
+                continue
+            if str(row.get("输出表名") or "").strip() == output_table:
+                return str(row.get("配置编号") or row.get("id"))
+        return None

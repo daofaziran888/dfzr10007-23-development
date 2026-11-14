@@ -40,12 +40,27 @@ const stats = [
 ]
 
 type Row = Record<string, string | number | null>
+type SampleRow = Record<string, string | number>
+
+type OutputTable = {
+  table_name: string
+  rows: SampleRow[]
+  meta: Record<string, unknown>
+}
+
+type ReadResult = {
+  ok: boolean
+  message: string
+  table: OutputTable | null
+}
 
 export default function EtlView() {
   const [rows, setRows] = useState<Row[]>([])
   const [total, setTotal] = useState(0)
   const [errorMessage, setErrorMessage] = useState('')
   const [filters, setFilters] = useState<Record<string, string>>({})
+  const [inputTable, setInputTable] = useState('samp_0001_customer_sample')
+  const [readResult, setReadResult] = useState<ReadResult | null>(null)
   const filterFields = useMemo(() => columns.slice(0, 3), [])
 
   const reload = useCallback(async () => {
@@ -84,6 +99,29 @@ export default function EtlView() {
     }
   }
 
+  // 数据准备流水线按表名读取采样环节④写出的同一张样本输出表
+  async function readSamplingOutput() {
+    setErrorMessage('')
+    setReadResult(null)
+    try {
+      const response = await request(`${ENDPOINT}/inputs/${encodeURIComponent(inputTable.trim())}`)
+      const payload = (await response.json()) as ReadResult
+      setReadResult(payload)
+      if (!payload.ok) {
+        setErrorMessage(payload.message)
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '采样输出表读取失败')
+    }
+  }
+
+  const previewColumns = useMemo(() => {
+    if (readResult?.table?.rows.length) {
+      return Object.keys(readResult.table.rows[0])
+    }
+    return []
+  }, [readResult])
+
   return (
     <section className="page" data-module="etl">
       <header className="page-head">
@@ -109,6 +147,48 @@ export default function EtlView() {
           </article>
         ))}
       </div>
+
+      <form
+        className="filter-bar"
+        onSubmit={(event) => { event.preventDefault(); void readSamplingOutput() }}
+        style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}
+      >
+        <label className="filter-item">
+          <span>采样输出表名（读取同一张表）</span>
+          <input
+            value={inputTable}
+            placeholder="例如 samp_0001_customer_sample"
+            onChange={(event) => setInputTable(event.target.value)}
+            style={{ minWidth: 260 }}
+          />
+        </label>
+        <button className="btn primary" type="submit">读取采样结果</button>
+      </form>
+
+      {readResult?.ok && readResult.table && (
+        <section style={{ marginBottom: 12, background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+          <h3 style={{ margin: '0 0 4px', fontSize: 14 }}>
+            已接入输入表「{readResult.table.table_name}」（{readResult.table.rows.length} 行）
+          </h3>
+          <p style={{ margin: '0 0 8px', fontSize: 12, color: 'var(--muted)' }}>
+            表来源 meta：<code>{JSON.stringify(readResult.table.meta)}</code>
+          </p>
+          <table className="data-table">
+            <thead>
+              <tr>
+                {previewColumns.map((column) => <th key={column}>{column}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {readResult.table.rows.map((sampleRow, index) => (
+                <tr key={String(index)}>
+                  {previewColumns.map((column) => <td key={column}>{String(sampleRow[column] ?? '')}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
 
       <form className="filter-bar" onSubmit={(event) => { event.preventDefault(); void reload() }}>
         {filterFields.map((field) => (

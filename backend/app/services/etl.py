@@ -59,3 +59,13 @@ class EtlService:
         entry["pending"] = target != STATUS_ORDER[-1]
         entry["abnormal"] = action in NEGATIVE_ACTIONS
         return entry, f"准备任务已{action}"
+
+    def read_sampling_output(self, table_name: str) -> tuple[dict[str, Any] | None, str]:
+        """数据准备流水线读取采样环节④写出的同一张输出表；表不存在时给出可读说明。"""
+        clean_name = str(table_name or "").strip()
+        if not clean_name:
+            return None, "缺少输出表名，数据准备流水线无法读取采样结果"
+        table = store.get_output_table(clean_name)
+        if table is None:
+            return None, f"采样输出表「{clean_name}」尚未生成，请先在数据采样管理执行一次采样"
+        return table, ""
